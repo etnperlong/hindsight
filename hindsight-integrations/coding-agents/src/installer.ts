@@ -243,11 +243,29 @@ function runClinePlugin(args: string[]): boolean {
   }
 }
 
+/**
+ * opencode reads its global config from EITHER `opencode.json` or `opencode.jsonc` under
+ * `~/.config/opencode`; both names are documented. So the installer must edit the one that is
+ * already there: hardcoding `opencode.json` meant a user whose config is `opencode.jsonc` got a
+ * SECOND config file created next to their real one — their settings in the file they wrote, our
+ * plugin entry in a file they never made.
+ *
+ * `.jsonc` is probed first because that is the name that carries comments, and a machine holding
+ * both is far likelier to have the commented one as the real config.
+ */
+export const OPENCODE_CONFIG_CANDIDATES = ["opencode.jsonc", "opencode.json"];
+
+function opencodeConfigPath(c: InstallCtx): string {
+  const dir = join(c.home, ".config", "opencode");
+  const existing = OPENCODE_CONFIG_CANDIDATES.map((f) => join(dir, f)).find((p) => existsSync(p));
+  return existing ?? join(dir, "opencode.json");
+}
+
 const opencode: HarnessInstaller = {
   name: "opencode",
   detect: (c) => onPath("opencode") || existsSync(join(c.home, ".config", "opencode")),
   install(c) {
-    const path = join(c.home, ".config", "opencode", "opencode.json");
+    const path = opencodeConfigPath(c);
     const cfg = readJson(path);
     const plugins: string[] = Array.isArray(cfg.plugin) ? cfg.plugin : [];
     cfg.plugin = [...plugins.filter((p) => !String(p).includes(MARKER)), c.pkgRoot];
@@ -255,7 +273,7 @@ const opencode: HarnessInstaller = {
     c.log?.(`opencode: plugin registered in ${path}`);
   },
   uninstall(c) {
-    const path = join(c.home, ".config", "opencode", "opencode.json");
+    const path = opencodeConfigPath(c);
     if (!existsSync(path)) return;
     const cfg = readJson(path);
     if (Array.isArray(cfg.plugin)) {

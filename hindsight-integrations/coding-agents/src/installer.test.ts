@@ -488,7 +488,39 @@ describe("kilo installer", () => {
 });
 
 describe("opencode installer", () => {
-  const cfgPath = (ctx: InstallCtx) => join(ctx.home, ".config", "opencode", "opencode.json");
+  const ocDir = (ctx: InstallCtx) => join(ctx.home, ".config", "opencode");
+  const cfgPath = (ctx: InstallCtx) => join(ocDir(ctx), "opencode.json");
+
+  // opencode loads `opencode.json` OR `opencode.jsonc` from ~/.config/opencode. Creating the
+  // .json variant next to an existing .jsonc leaves the user with two configs — their settings in
+  // one, our plugin entry in the other — so the install has to edit whichever already exists.
+  it("edits an existing opencode.jsonc instead of creating a competing opencode.json", () => {
+    const ctx = makeCtx();
+    const jsonc = join(ocDir(ctx), "opencode.jsonc");
+    mkdirSync(ocDir(ctx), { recursive: true });
+    writeFileSync(jsonc, '{\n  "$schema": "https://opencode.ai/config.json"\n}\n');
+    run(["install", "opencode"], ctx);
+    expect(existsSync(cfgPath(ctx))).toBe(false);
+    expect(readJson(jsonc).plugin).toEqual([ctx.pkgRoot]);
+  });
+
+  it("uninstall edits the same opencode.jsonc the install wrote to", () => {
+    const ctx = makeCtx();
+    const jsonc = join(ocDir(ctx), "opencode.jsonc");
+    mkdirSync(ocDir(ctx), { recursive: true });
+    writeFileSync(jsonc, "{}\n");
+    run(["install", "opencode"], ctx);
+    run(["uninstall", "opencode"], ctx);
+    expect(readJson(jsonc).plugin).toBeUndefined();
+    expect(existsSync(cfgPath(ctx))).toBe(false);
+  });
+
+  it("creates opencode.json when neither candidate exists", () => {
+    const ctx = makeCtx();
+    run(["install", "opencode"], ctx);
+    expect(existsSync(cfgPath(ctx))).toBe(true);
+    expect(existsSync(join(ocDir(ctx), "opencode.jsonc"))).toBe(false);
+  });
 
   it("install adds ctx.pkgRoot to the plugin array exactly once, even across reinstalls", () => {
     const ctx = makeCtx();
