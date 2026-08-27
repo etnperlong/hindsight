@@ -316,8 +316,9 @@ const opencode: HarnessInstaller = {
       cfg = parsed;
     }
     const plugins: unknown[] = Array.isArray(cfg.plugin) ? cfg.plugin : [];
-    cfg.plugin = [...plugins.filter((p) => !String(p).includes(MARKER)), c.pkgRoot];
-    writeJson(path, cfg);
+    // writeJsonc, not writeJson: this config routinely carries comments, and re-serializing the
+    // parsed object would strip every one of them even though the read succeeded.
+    writeJsonc(path, "plugin", [...plugins.filter((p) => !String(p).includes(MARKER)), c.pkgRoot]);
     c.log?.(`opencode: plugin registered in ${path}`);
   },
   uninstall(c) {
@@ -325,9 +326,8 @@ const opencode: HarnessInstaller = {
     if (!existsSync(path)) return;
     const cfg = parseJsonc(readFileSync(path, "utf8"));
     if (!cfg || !Array.isArray(cfg.plugin)) return;
-    cfg.plugin = cfg.plugin.filter((p: unknown) => !String(p).includes(MARKER));
-    if (!cfg.plugin.length) delete cfg.plugin;
-    writeJson(path, cfg);
+    const kept = cfg.plugin.filter((p: unknown) => !String(p).includes(MARKER));
+    writeJsonc(path, "plugin", kept.length ? kept : undefined);
     c.log?.("opencode: plugin entry removed");
   },
 };

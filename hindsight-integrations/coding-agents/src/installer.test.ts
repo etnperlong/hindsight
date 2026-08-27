@@ -11,7 +11,7 @@ import {
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { INSTALLERS, MARKER, run, type InstallCtx } from "./installer";
+import { INSTALLERS, MARKER, parseJsonc, run, type InstallCtx } from "./installer";
 
 // Every test gets a FRESH temp dir as ctx.home (never the real $HOME) and a stubbed
 // claudeMcp so the real `claude` CLI is never executed. run() is always called with
@@ -534,10 +534,39 @@ describe("opencode installer", () => {
       `{\n  // where memory lives\n  "share": "disabled",\n  "provider": {\n    "openai": { "name": "gw" },\n  },\n}\n`
     );
     run(["install", "opencode"], ctx);
-    const cfg = readJson(jsonc);
+    const cfg = parseJsonc(readFileSync(jsonc, "utf8"))!;
     expect(cfg.plugin).toEqual([ctx.pkgRoot]);
     expect(cfg.share).toBe("disabled"); // survived — this is what used to be wiped
     expect(cfg.provider).toEqual({ openai: { name: "gw" } });
+  });
+
+  // Reading the file correctly is only half of it: re-serializing the parsed object would drop
+  // every comment the user wrote, so a config that survived would still come back damaged.
+  it("leaves the user's comments and formatting in place", () => {
+    const ctx = makeCtx();
+    const jsonc = join(ocDir(ctx), "opencode.jsonc");
+    mkdirSync(ocDir(ctx), { recursive: true });
+    writeFileSync(
+      jsonc,
+      `{\n  /** Providers **/\n  "provider": {\n    // via the gateway\n    "openai": { "name": "gw" },\n  },\n}\n`
+    );
+    run(["install", "opencode"], ctx);
+    const text = readFileSync(jsonc, "utf8");
+    expect(text).toContain("/** Providers **/");
+    expect(text).toContain("// via the gateway");
+    expect(text).toContain('"openai": { "name": "gw" },');
+  });
+
+  it("uninstall drops the plugin key without reformatting the file", () => {
+    const ctx = makeCtx();
+    const jsonc = join(ocDir(ctx), "opencode.jsonc");
+    mkdirSync(ocDir(ctx), { recursive: true });
+    writeFileSync(jsonc, `{\n  /** mine **/\n  "share": "disabled",\n}\n`);
+    run(["install", "opencode"], ctx);
+    run(["uninstall", "opencode"], ctx);
+    const text = readFileSync(jsonc, "utf8");
+    expect(text).toContain("/** mine **/");
+    expect(parseJsonc(text)).toEqual({ share: "disabled" });
   });
 
   // Trailing commas are as common as comments in a hand-written config, and JSON.parse rejects
@@ -550,7 +579,9 @@ describe("opencode installer", () => {
       `{\n  "model": "openai/gpt-5",\n  "plugin": [\n    "other",\n  ],\n}\n`
     );
     run(["install", "opencode"], ctx);
-    const cfg = readJson(cfgPath(ctx));
+    // Read back with the JSONC parser: the trailing commas are PRESERVED by the write, so the
+    // result is still not strict JSON — which is the point.
+    const cfg = parseJsonc(readFileSync(cfgPath(ctx), "utf8"))!;
     expect(cfg.model).toBe("openai/gpt-5");
     expect(cfg.plugin).toEqual(["other", ctx.pkgRoot]);
   });
