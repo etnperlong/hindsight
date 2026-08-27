@@ -522,6 +522,57 @@ describe("opencode installer", () => {
     expect(existsSync(join(ocDir(ctx), "opencode.jsonc"))).toBe(false);
   });
 
+  // The reported data loss: a commented config went through strict JSON.parse, which threw, and
+  // readJson's {} fallback meant the whole file was rewritten as just our plugin key. Every
+  // provider, agent override and MCP entry in it was gone.
+  it("keeps the rest of a commented config instead of replacing it with just our key", () => {
+    const ctx = makeCtx();
+    const jsonc = join(ocDir(ctx), "opencode.jsonc");
+    mkdirSync(ocDir(ctx), { recursive: true });
+    writeFileSync(
+      jsonc,
+      `{\n  // where memory lives\n  "share": "disabled",\n  "provider": {\n    "openai": { "name": "gw" },\n  },\n}\n`
+    );
+    run(["install", "opencode"], ctx);
+    const cfg = readJson(jsonc);
+    expect(cfg.plugin).toEqual([ctx.pkgRoot]);
+    expect(cfg.share).toBe("disabled"); // survived — this is what used to be wiped
+    expect(cfg.provider).toEqual({ openai: { name: "gw" } });
+  });
+
+  // Trailing commas are as common as comments in a hand-written config, and JSON.parse rejects
+  // both — so a .json file carrying them hit the very same wipe.
+  it("parses a trailing-comma opencode.json rather than clobbering it", () => {
+    const ctx = makeCtx();
+    mkdirSync(ocDir(ctx), { recursive: true });
+    writeFileSync(cfgPath(ctx), `{\n  "model": "openai/gpt-5",\n  "plugin": [\n    "other",\n  ],\n}\n`);
+    run(["install", "opencode"], ctx);
+    const cfg = readJson(cfgPath(ctx));
+    expect(cfg.model).toBe("openai/gpt-5");
+    expect(cfg.plugin).toEqual(["other", ctx.pkgRoot]);
+  });
+
+  it("refuses to clobber a config it cannot parse", () => {
+    const ctx = makeCtx();
+    mkdirSync(ocDir(ctx), { recursive: true });
+    const broken = '{ "provider": { unquoted } }';
+    writeFileSync(cfgPath(ctx), broken);
+    const logs: string[] = [];
+    ctx.log = (m) => logs.push(m);
+    run(["install", "opencode"], ctx);
+    expect(readFileSync(cfgPath(ctx), "utf8")).toBe(broken);
+    expect(logs.join("\n")).toContain("SKIPPED");
+  });
+
+  it("uninstall leaves an unparseable config untouched", () => {
+    const ctx = makeCtx();
+    mkdirSync(ocDir(ctx), { recursive: true });
+    const broken = '{ "provider": { unquoted } }';
+    writeFileSync(cfgPath(ctx), broken);
+    run(["uninstall", "opencode"], ctx);
+    expect(readFileSync(cfgPath(ctx), "utf8")).toBe(broken);
+  });
+
   it("install adds ctx.pkgRoot to the plugin array exactly once, even across reinstalls", () => {
     const ctx = makeCtx();
     expect(run(["install", "opencode"], ctx)).toBe(0);

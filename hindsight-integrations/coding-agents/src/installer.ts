@@ -96,7 +96,10 @@ function readJson(path: string): Record<string, any> {
 }
 
 /**
- * Parse a JSONC file (JSON with comments), as Kilo's `kilo.jsonc` may be.
+ * Parse a JSONC file (JSON with comments), as Kilo's `kilo.jsonc` and opencode's `opencode.jsonc`
+ * may be. Applied to `opencode.json` too: comments and trailing commas turn up in the wild under
+ * that name as well, and the host reads it either way — so what decides the parser here is the
+ * content the installer might meet, not the extension.
  *
  * Returns null — NOT {} — when the file exists but can't be parsed. readJson's {} fallback is safe
  * for a strict-JSON host (an unparseable file is a broken file), but here a config we merely failed
@@ -266,8 +269,16 @@ const opencode: HarnessInstaller = {
   detect: (c) => onPath("opencode") || existsSync(join(c.home, ".config", "opencode")),
   install(c) {
     const path = opencodeConfigPath(c);
-    const cfg = readJson(path);
-    const plugins: string[] = Array.isArray(cfg.plugin) ? cfg.plugin : [];
+    let cfg: Record<string, any> = {};
+    if (existsSync(path)) {
+      const parsed = parseJsonc(readFileSync(path, "utf8"));
+      if (!parsed) {
+        c.log?.(`opencode: SKIPPED — could not parse ${path}; add the plugin entry manually`);
+        return;
+      }
+      cfg = parsed;
+    }
+    const plugins: unknown[] = Array.isArray(cfg.plugin) ? cfg.plugin : [];
     cfg.plugin = [...plugins.filter((p) => !String(p).includes(MARKER)), c.pkgRoot];
     writeJson(path, cfg);
     c.log?.(`opencode: plugin registered in ${path}`);
@@ -275,12 +286,11 @@ const opencode: HarnessInstaller = {
   uninstall(c) {
     const path = opencodeConfigPath(c);
     if (!existsSync(path)) return;
-    const cfg = readJson(path);
-    if (Array.isArray(cfg.plugin)) {
-      cfg.plugin = cfg.plugin.filter((p: string) => !String(p).includes(MARKER));
-      if (!cfg.plugin.length) delete cfg.plugin;
-      writeJson(path, cfg);
-    }
+    const cfg = parseJsonc(readFileSync(path, "utf8"));
+    if (!cfg || !Array.isArray(cfg.plugin)) return;
+    cfg.plugin = cfg.plugin.filter((p: unknown) => !String(p).includes(MARKER));
+    if (!cfg.plugin.length) delete cfg.plugin;
+    writeJson(path, cfg);
     c.log?.("opencode: plugin entry removed");
   },
 };
