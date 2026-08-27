@@ -413,8 +413,9 @@ const kilo: HarnessInstaller = {
     }
     const entry = pathToFileURL(join(c.dist, "kilo.js")).href;
     const plugins: unknown[] = Array.isArray(cfg.plugin) ? cfg.plugin : [];
-    cfg.plugin = [...plugins.filter((p) => !String(p).includes(MARKER)), entry];
-    writeJson(path, cfg);
+    // writeJsonc for the same reason the read uses parseJsonc: kilo.jsonc is a commented file, and
+    // re-serializing the parsed object would strip what we just took care to read.
+    writeJsonc(path, "plugin", [...plugins.filter((p) => !String(p).includes(MARKER)), entry]);
     c.log?.(`kilo: plugin registered in ${path}`);
   },
   uninstall(c) {
@@ -422,9 +423,8 @@ const kilo: HarnessInstaller = {
     if (!existsSync(path)) return;
     const cfg = parseJsonc(readFileSync(path, "utf8"));
     if (!cfg || !Array.isArray(cfg.plugin)) return;
-    cfg.plugin = cfg.plugin.filter((p: unknown) => !String(p).includes(MARKER));
-    if (!cfg.plugin.length) delete cfg.plugin;
-    writeJson(path, cfg);
+    const kept = cfg.plugin.filter((p: unknown) => !String(p).includes(MARKER));
+    writeJsonc(path, "plugin", kept.length ? kept : undefined);
     c.log?.("kilo: plugin entry removed");
   },
 };

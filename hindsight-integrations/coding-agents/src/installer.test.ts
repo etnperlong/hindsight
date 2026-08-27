@@ -463,9 +463,13 @@ describe("kilo installer", () => {
     writeFileSync(jsonc, '{\n  // my config\n  "$schema": "https://app.kilo.ai/config.json"\n}\n');
     run(["install", "kilo"], ctx);
     expect(existsSync(join(kiloDir(ctx), "kilo.json"))).toBe(false);
-    const cfg = readJson(jsonc);
+    const text = readFileSync(jsonc, "utf8");
+    const cfg = parseJsonc(text)!;
     expect(cfg.plugin).toEqual([entryOf(ctx)]);
-    expect(cfg.$schema).toBe("https://app.kilo.ai/config.json"); // comments dropped, DATA kept
+    expect(cfg.$schema).toBe("https://app.kilo.ai/config.json");
+    // The comment used to be dropped here: the read was JSONC-aware but the write re-serialized
+    // the parsed object, so a commented config came back stripped.
+    expect(text).toContain("// my config");
   });
 
   it("refuses to clobber a config it cannot parse", () => {
@@ -872,6 +876,42 @@ describe("MCP registrations name the calling harness", () => {
     expect(registrations.length).toBeGreaterThan(0);
     for (const text of registrations) expect(text).toContain(`HINDSIGHT_MCP_HARNESS`);
     for (const text of registrations) expect(text).toContain(harness);
+  });
+});
+
+/**
+ * A JSONC-configured host must survive the install with its comments intact.
+ *
+ * Swept over the family rather than asserted per harness: opencode and kilo each read with
+ * `parseJsonc` and then wrote with `writeJson`, which re-serializes and strips exactly what the
+ * JSONC-aware read preserved. The sibling that forgets is by construction the one nobody wrote a
+ * test for, so this drives the real install and checks the file that came out.
+ */
+describe("JSONC hosts keep their comments through an install", () => {
+  // Each entry is the config file the harness edits when it already exists, with the comment we
+  // expect to still be there afterwards. Hosts absent from this list are strict-JSON by design
+  // (claude-code's settings.json, cursor's hooks.json, …) or not JSON at all (grok/dsh: TOML/YAML).
+  const JSONC_HOSTS: { harness: string; relPath: string[] }[] = [
+    { harness: "opencode", relPath: [".config", "opencode", "opencode.jsonc"] },
+    { harness: "kilo", relPath: [".config", "kilo", "kilo.jsonc"] },
+  ];
+
+  it.each(JSONC_HOSTS)("$harness", ({ harness, relPath }) => {
+    const ctx = makeCtx();
+    const path = join(ctx.home, ...relPath);
+    mkdirSync(dirname(path), { recursive: true });
+    writeFileSync(path, `{\n  // keep me\n  "share": "disabled",\n}\n`);
+
+    expect(run(["install", harness], ctx)).toBe(0);
+    const afterInstall = readFileSync(path, "utf8");
+    expect(afterInstall).toContain("// keep me");
+    expect(parseJsonc(afterInstall)!.share).toBe("disabled");
+    expect(parseJsonc(afterInstall)!.plugin).toHaveLength(1);
+
+    expect(run(["uninstall", harness], ctx)).toBe(0);
+    const afterUninstall = readFileSync(path, "utf8");
+    expect(afterUninstall).toContain("// keep me");
+    expect(parseJsonc(afterUninstall)).toEqual({ share: "disabled" });
   });
 });
 
