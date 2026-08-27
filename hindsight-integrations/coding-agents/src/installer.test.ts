@@ -545,7 +545,10 @@ describe("opencode installer", () => {
   it("parses a trailing-comma opencode.json rather than clobbering it", () => {
     const ctx = makeCtx();
     mkdirSync(ocDir(ctx), { recursive: true });
-    writeFileSync(cfgPath(ctx), `{\n  "model": "openai/gpt-5",\n  "plugin": [\n    "other",\n  ],\n}\n`);
+    writeFileSync(
+      cfgPath(ctx),
+      `{\n  "model": "openai/gpt-5",\n  "plugin": [\n    "other",\n  ],\n}\n`
+    );
     run(["install", "opencode"], ctx);
     const cfg = readJson(cfgPath(ctx));
     expect(cfg.model).toBe("openai/gpt-5");

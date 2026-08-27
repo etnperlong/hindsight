@@ -38,6 +38,7 @@ import { homedir, tmpdir } from "node:os";
 import { isatty } from "node:tty";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { applyEdits, modify } from "jsonc-parser";
 import { HOOK_HARNESSES, type HookHarnessName } from "./harness/hook-lifecycle";
 import { importLocalHistory } from "./core/history";
 import { detectLlm, hasRustToolchain, hasUvx, type LlmChoice } from "./core/daemon";
@@ -121,10 +122,46 @@ export function parseJsonc(text: string): Record<string, any> | null {
 
 function writeJson(path: string, value: unknown): void {
   mkdirSync(dirname(path), { recursive: true });
+  backupOnce(path);
+  writeFileSync(path, JSON.stringify(value, null, 2) + "\n");
+}
+
+/** The first time we touch an existing file, keep a copy of what the user had. */
+function backupOnce(path: string): void {
   if (existsSync(path) && !existsSync(`${path}.hindsight-backup`)) {
     copyFileSync(path, `${path}.hindsight-backup`);
   }
-  writeFileSync(path, JSON.stringify(value, null, 2) + "\n");
+}
+
+/**
+ * Set (or, with `undefined`, delete) ONE top-level key, leaving the rest of the file's text alone.
+ *
+ * `writeJson` round-trips through `JSON.stringify`, which can only emit strict JSON — so writing a
+ * JSONC host's config with it silently strips every comment and trailing comma the user wrote, and
+ * reflows their formatting. Parsing the file was only half the problem: even a config we read
+ * correctly came back stripped. `jsonc-parser` computes a minimal text edit instead, so everything
+ * we did not touch survives byte for byte.
+ *
+ * Limited to a single key on purpose. A whole-object write is what forces a re-serialize, and both
+ * callers only ever mutate `plugin`; a general "merge this object" helper could not preserve
+ * anything. Comments INSIDE the edited value are still lost — the array is re-emitted — but the
+ * rest of the document, which is all a user notices, is not.
+ */
+function writeJsonc(path: string, key: string, value: unknown): void {
+  const text = existsSync(path) ? readFileSync(path, "utf8") : "";
+  const edits = modify(text, [key], value, {
+    formattingOptions: {
+      tabSize: 2,
+      insertSpaces: true,
+      // Keep a CRLF file CRLF: rewriting every line ending would turn a one-line change into a
+      // whole-file diff for anyone on Windows.
+      eol: text.includes("\r\n") ? "\r\n" : "\n",
+    },
+  });
+  const next = applyEdits(text, edits);
+  mkdirSync(dirname(path), { recursive: true });
+  backupOnce(path);
+  writeFileSync(path, next.endsWith("\n") ? next : `${next}\n`);
 }
 
 /** Hook-array merge for claude/codex-style files: drop our old entries, append the new one. */
